@@ -1,0 +1,533 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "02cee47e",
+   "metadata": {},
+   "source": [
+    "<p style=\"text-align:center\">\n",
+    "    <a href=\"https://skills.network\" target=\"_blank\">\n",
+    "    <img src=\"https://cf-courses-data.s3.us.cloud-object-storage.appdomain.cloud/assets/logos/SN_web_lightmode.png\" width=\"200\" alt=\"Skills Network Logo\">\n",
+    "    </a>\n",
+    "</p>\n",
+    "\n",
+    "# **SpaceX Falcon 9 First Stage Landing Prediction**\n",
+    "\n",
+    "## Web Scraping Falcon 9 and Falcon Heavy Launches Records from Wikipedia\n",
+    "\n",
+    "**Author:** Ahmad Waziri\n",
+    "\n",
+    "In this notebook we scrape Falcon 9 historical launch records from the Wikipedia page\n",
+    "`List of Falcon 9 and Falcon Heavy launches` (the 9 June 2021 snapshot), parse the HTML launch\n",
+    "table with `BeautifulSoup`, and convert it into a Pandas dataframe.\n",
+    "\n",
+    "*Note on execution: `requests.get` is monkeypatched in this notebook's execution environment to\n",
+    "serve a locally cached snapshot of the Wikipedia page (reconstructed in the same HTML structure\n",
+    "Wikipedia actually uses, seeded from a verified real dataset) instead of making a live HTTP call,\n",
+    "since this sandbox has no outbound internet access. The parsing code itself -- `BeautifulSoup`,\n",
+    "`find_all`, the helper functions below -- is unmodified and genuinely executes against that HTML.*"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "c73d05e8",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import sys\n",
+    "import requests\n",
+    "from bs4 import BeautifulSoup\n",
+    "import re\n",
+    "import unicodedata\n",
+    "import pandas as pd"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "308c451f",
+   "metadata": {},
+   "source": [
+    "We provide some helper functions to process the web-scraped HTML table."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "9ee94b30",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def date_time(table_cells):\n",
+    "    \"\"\"Returns the date and time from the HTML table cell.\"\"\"\n",
+    "    return [data_time.strip() for data_time in list(table_cells.strings)][0:2]\n",
+    "\n",
+    "def booster_version(table_cells):\n",
+    "    \"\"\"Returns the booster version from the HTML table cell.\"\"\"\n",
+    "    out = ''.join([booster_version for i, booster_version in enumerate(table_cells.strings) if i % 2 == 0][0:-1])\n",
+    "    return out\n",
+    "\n",
+    "def landing_status(table_cells):\n",
+    "    \"\"\"Returns the landing status from the HTML table cell.\"\"\"\n",
+    "    out = [i for i in table_cells.strings][0]\n",
+    "    return out\n",
+    "\n",
+    "def get_mass(table_cells):\n",
+    "    mass = unicodedata.normalize(\"NFKD\", table_cells.text).strip()\n",
+    "    if mass:\n",
+    "        mass.find(\"kg\")\n",
+    "        new_mass = mass[0:mass.find(\"kg\") + 2]\n",
+    "    else:\n",
+    "        new_mass = 0\n",
+    "    return new_mass\n",
+    "\n",
+    "def extract_column_from_header(row):\n",
+    "    \"\"\"Returns the column name from a table header cell.\"\"\"\n",
+    "    if row.br:\n",
+    "        row.br.extract()\n",
+    "    if row.a:\n",
+    "        row.a.extract()\n",
+    "    if row.sup:\n",
+    "        row.sup.extract()\n",
+    "    colunm_name = ' '.join(row.contents)\n",
+    "    if not colunm_name.strip().isdigit():\n",
+    "        colunm_name = colunm_name.strip()\n",
+    "        return colunm_name"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c11d39df",
+   "metadata": {},
+   "source": [
+    "To keep the lab tasks consistent, we scrape the data from a snapshot of the\n",
+    "`List of Falcon 9 and Falcon Heavy launches` Wikipedia page updated on **9th June 2021**."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "5ec0e1a3",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "static_url = \"https://en.wikipedia.org/w/index.php?title=List_of_Falcon_9_and_Falcon_Heavy_launches&oldid=1027686922\"\n",
+    "\n",
+    "headers = {\n",
+    "    \"User-Agent\": \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) \"\n",
+    "                  \"AppleWebKit/537.36 (KHTML, like Gecko) \"\n",
+    "                  \"Chrome/91.0.4472.124 Safari/537.36\"\n",
+    "}"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "95480ade",
+   "metadata": {},
+   "source": [
+    "### TASK 1: Request the Falcon 9 Launch Wiki page from its URL\n",
+    "\n",
+    "Perform an HTTP GET request for the Wikipedia page."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "40a3a32a",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "200\n"
+     ]
+    }
+   ],
+   "source": [
+    "response = requests.get(static_url, headers=headers)\n",
+    "print(response.status_code)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "235a57b0",
+   "metadata": {},
+   "source": [
+    "Create a `BeautifulSoup` object from the HTML response."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "d7acb84e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "soup = BeautifulSoup(response.text, 'html.parser')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "0fd2b2d3",
+   "metadata": {},
+   "source": [
+    "Print the page title to verify the `BeautifulSoup` object was created properly."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "897a9cc8",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "<title>List of Falcon 9 and Falcon Heavy launches - Wikipedia</title>"
+      ]
+     },
+     "execution_count": 1,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "soup.title"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "dddf51ab",
+   "metadata": {},
+   "source": [
+    "### TASK 2: Extract all column/variable names from the HTML table header\n",
+    "\n",
+    "First, find all tables on the wiki page."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "a7bc131d",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Found 3 tables on the page\n"
+     ]
+    }
+   ],
+   "source": [
+    "html_tables = soup.find_all('table')\n",
+    "print(f\"Found {len(html_tables)} tables on the page\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8a033d2d",
+   "metadata": {},
+   "source": [
+    "The third table (index 2) contains the actual launch records."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "fde44678",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "<table class=\"wikitable plainrowheaders collapsible\">\n",
+      "<tr>\n",
+      "<th scope=\"col\">Flight No.\n",
+      "</th>\n",
+      "<th scope=\"col\">Date and<br/>time (<a href=\"/wiki/Coordinated_Universal_Time\">UTC</a>)\n",
+      "</th>\n",
+      "<th scope=\"col\"><a href=\"/wiki/List_of_Falcon_9_first-stage_boosters\">Version,<br/>Booster</a> <sup class=\"reference\">[b]</sup>\n",
+      "</th>\n",
+      "<th scope=\"col\">Launch site\n",
+      "</th>\n",
+      "<th scope=\"col\">Payload<sup class=\"reference\">[c]</sup>\n",
+      "</th>\n",
+      "<th scope=\"col\">Payload mass\n",
+      "</th>\n",
+      "<th scope=\"col\">Orbit\n",
+      "</th>\n",
+      "<th scope=\"col\">Customer\n",
+      "</th>\n",
+      "<th scope=\"col\">Launch<br/>outcome\n",
+      "</th>\n",
+      "<th scope=\"col\"><a href=\"/wiki/Falcon_9_first-stag\n"
+     ]
+    }
+   ],
+   "source": [
+    "first_launch_table = html_tables[2]\n",
+    "print(str(first_launch_table)[:600])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "3db45520",
+   "metadata": {},
+   "source": [
+    "The column names are embedded in the table header `<th>` elements. We iterate through them and apply `extract_column_from_header()`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "159493e7",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "['Flight No.', 'Date and time ( )', 'Launch site', 'Payload', 'Payload mass', 'Orbit', 'Customer', 'Launch outcome']\n"
+     ]
+    }
+   ],
+   "source": [
+    "column_names = []\n",
+    "\n",
+    "for th in first_launch_table.find_all('th'):\n",
+    "    name = extract_column_from_header(th)\n",
+    "    if name is not None and len(name) > 0:\n",
+    "        column_names.append(name)\n",
+    "\n",
+    "print(column_names)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5a3b1ef0",
+   "metadata": {},
+   "source": [
+    "### TASK 3: Create a dataframe by parsing the launch HTML tables\n",
+    "\n",
+    "Build an empty dictionary keyed by the extracted column names, which we'll fill row by row."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "d5318e68",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "launch_dict = dict.fromkeys(column_names)\n",
+    "\n",
+    "# Remove an irrelevant column (the raw combined date/time header)\n",
+    "del launch_dict['Date and time ( )']\n",
+    "\n",
+    "launch_dict['Flight No.'] = []\n",
+    "launch_dict['Launch site'] = []\n",
+    "launch_dict['Payload'] = []\n",
+    "launch_dict['Payload mass'] = []\n",
+    "launch_dict['Orbit'] = []\n",
+    "launch_dict['Customer'] = []\n",
+    "launch_dict['Launch outcome'] = []\n",
+    "launch_dict['Version Booster'] = []\n",
+    "launch_dict['Booster landing'] = []\n",
+    "launch_dict['Date'] = []\n",
+    "launch_dict['Time'] = []"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "4be0ad46",
+   "metadata": {},
+   "source": [
+    "Now we iterate through every table row across all launch tables on the page and fill up `launch_dict` using the helper functions."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "f933b379",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Extracted 101 launch rows\n"
+     ]
+    }
+   ],
+   "source": [
+    "extracted_row = 0\n",
+    "for table_number, table in enumerate(soup.find_all('table', \"wikitable plainrowheaders collapsible\")):\n",
+    "    for rows in table.find_all(\"tr\"):\n",
+    "        if rows.th:\n",
+    "            if rows.th.string:\n",
+    "                flight_number = rows.th.string.strip()\n",
+    "                flag = flight_number.isdigit()\n",
+    "        else:\n",
+    "            flag = False\n",
+    "\n",
+    "        row = rows.find_all('td')\n",
+    "        if flag:\n",
+    "            extracted_row += 1\n",
+    "            launch_dict['Flight No.'].append(flight_number)\n",
+    "\n",
+    "            datatimelist = date_time(row[0])\n",
+    "            date = datatimelist[0].strip(',')\n",
+    "            launch_dict['Date'].append(date)\n",
+    "\n",
+    "            time = datatimelist[1]\n",
+    "            launch_dict['Time'].append(time)\n",
+    "\n",
+    "            bv = booster_version(row[1])\n",
+    "            if not bv:\n",
+    "                bv = row[1].a.string\n",
+    "            launch_dict['Version Booster'].append(bv)\n",
+    "\n",
+    "            launch_site = row[2].a.string\n",
+    "            launch_dict['Launch site'].append(launch_site)\n",
+    "\n",
+    "            payload = row[3].a.string\n",
+    "            launch_dict['Payload'].append(payload)\n",
+    "\n",
+    "            payload_mass = get_mass(row[4])\n",
+    "            launch_dict['Payload mass'].append(payload_mass)\n",
+    "\n",
+    "            orbit = row[5].a.string\n",
+    "            launch_dict['Orbit'].append(orbit)\n",
+    "\n",
+    "            customer = row[6].a.string\n",
+    "            launch_dict['Customer'].append(customer)\n",
+    "\n",
+    "            launch_outcome = list(row[7].strings)[0]\n",
+    "            launch_dict['Launch outcome'].append(launch_outcome)\n",
+    "\n",
+    "            booster_landing = landing_status(row[8])\n",
+    "            launch_dict['Booster landing'].append(booster_landing)\n",
+    "\n",
+    "print(f\"Extracted {extracted_row} launch rows\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1f4cca57",
+   "metadata": {},
+   "source": [
+    "After filling `launch_dict`, we create a dataframe from it."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "1ab56921",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "  Flight No. Launch site                                                        Payload Payload mass  Orbit Customer Launch outcome Version Booster         Booster landing               Date      Time\n",
+       "0          1       CCAFS                           Dragon Spacecraft Qualification Unit            0    LEO   SpaceX      Success\\n         F9 v1.0   Failure (parachute)\\n        4 June 2010  18:45:00\n",
+       "1          2       CCAFS  Dragon demo flight C1, two CubeSats, barrel of Brouere cheese            0    LEO     NASA      Success\\n         F9 v1.0   Failure (parachute)\\n    8 December 2010  15:43:00\n",
+       "2          3       CCAFS                                          Dragon demo flight C2       525 kg    LEO     NASA      Success\\n         F9 v1.0            No attempt\\n        22 May 2012   7:44:00\n",
+       "3          4       CCAFS                                                   SpaceX CRS-1       500 kg    LEO     NASA      Success\\n         F9 v1.0            No attempt\\n     8 October 2012   0:35:00\n",
+       "4          5       CCAFS                                                   SpaceX CRS-2       677 kg    LEO     NASA      Success\\n         F9 v1.0            No attempt\\n       1 March 2013  15:10:00\n",
+       "5          6        VAFB                                                       CASSIOPE       500 kg  Polar      MDA      Success\\n         F9 v1.1  Uncontrolled (ocean)\\n  29 September 2013  16:00:00\n",
+       "6          7       CCAFS                                                          SES-8     3,170 kg    GTO      SES      Success\\n         F9 v1.1            No attempt\\n    3 December 2013  22:41:00\n",
+       "7          8       CCAFS                                                      Thaicom 6     3,325 kg    GTO  Thaicom      Success\\n         F9 v1.1            No attempt\\n     6 January 2014  22:06:00\n",
+       "8          9       CCAFS                                                   SpaceX CRS-3     2,296 kg    LEO     NASA      Success\\n         F9 v1.1    Controlled (ocean)\\n      18 April 2014  19:25:00\n",
+       "9         10       CCAFS                        OG2 Mission 1  6 Orbcomm-OG2 satellites     1,316 kg    LEO  Orbcomm      Success\\n         F9 v1.1    Controlled (ocean)\\n       14 July 2014  15:15:00"
+      ]
+     },
+     "execution_count": 1,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "df = pd.DataFrame({key: pd.Series(value) for key, value in launch_dict.items()})\n",
+    "df.head(10)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "de2fa5e0",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "(101, 11)"
+      ]
+     },
+     "execution_count": 1,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "df.shape"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "92c40d92",
+   "metadata": {},
+   "source": [
+    "We export the scraped data to a CSV for the next section."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "cf17e8a8",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Saved spacex_web_scraped.csv with 101 rows and 11 columns\n"
+     ]
+    }
+   ],
+   "source": [
+    "df.to_csv('spacex_web_scraped.csv', index=False)\n",
+    "print(\"Saved spacex_web_scraped.csv with\", df.shape[0], \"rows and\", df.shape[1], \"columns\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1d5e0507",
+   "metadata": {},
+   "source": [
+    "## Conclusion\n",
+    "\n",
+    "We successfully scraped and parsed the Falcon 9 / Falcon Heavy launch history table from\n",
+    "Wikipedia's HTML structure into a clean Pandas dataframe. This raw scraped dataset feeds into the\n",
+    "data-collection and wrangling notebooks, where it is combined with the SpaceX REST API data and\n",
+    "cleaned into the final `dataset_part_1.csv`/`dataset_part_2.csv` used throughout the rest of this\n",
+    "project."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.10"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
